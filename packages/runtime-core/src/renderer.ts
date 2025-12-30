@@ -1742,6 +1742,25 @@ function baseCreateRenderer(
     }
   }
 
+  /**
+   * Patch unkeyed children.
+   * This logic is applied when children arrays do not have keys (or only some do, but we entered the unkeyed path).
+   * It updates children in-place by index, which is efficient for simple lists but can cause issues with stateful components or transitions if orders change.
+   *
+   * 处理无 key 子节点更新。
+   * 当子节点数组没有 key（或在这个路径中被视为无 key）时，应用此逻辑。
+   * 它通过索引就地更新子节点，这对于简单列表很高效，但如果顺序改变，可能会导致有状态组件或过渡效果出现问题。
+   *
+   * @param c1 - Old children VNodes / 旧的子节点 VNode 数组
+   * @param c2 - New children VNodes (can be partial) / 新的子节点数组
+   * @param container - The parent container element / 父容器元素
+   * @param anchor - The anchor for node insertion / 节点插入的锚点
+   * @param parentComponent - The parent component instance / 父组件实例
+   * @param parentSuspense - The parent suspense boundary / 父 Suspense 边界
+   * @param namespace - The element namespace (SVG, MathML, etc.) / 元素命名空间
+   * @param slotScopeIds - Slot scope IDs for style scoping / 插槽作用域 ID
+   * @param optimized - Whether to skip some checks (fast path) / 是否开启优化模式
+   */
   const patchUnkeyedChildren = (
     c1: VNode[],
     c2: VNodeArrayChildren,
@@ -1753,16 +1772,25 @@ function baseCreateRenderer(
     slotScopeIds: string[] | null,
     optimized: boolean,
   ) => {
+    // 确保 c1 是一个数组，若为空则默认使用空数组
     c1 = c1 || EMPTY_ARR
+    // 确保 c2 是一个数组，若为空则默认使用空数组
     c2 = c2 || EMPTY_ARR
+    // 获取旧子节点列表的长度
     const oldLength = c1.length
+    // 获取新子节点列表的长度
     const newLength = c2.length
+    // 计算公共长度（较短的那个长度），这部分将进行 diff 对比
     const commonLength = Math.min(oldLength, newLength)
+    // 声明循环变量
     let i
+    // 遍历公共部分
     for (i = 0; i < commonLength; i++) {
+      // 获取新节点，并在优化模式下克隆（如果已挂载），或者规范化该节点
       const nextChild = (c2[i] = optimized
         ? cloneIfMounted(c2[i] as VNode)
         : normalizeVNode(c2[i]))
+      // 递归 patch：比较并更新旧节点和新节点
       patch(
         c1[i],
         nextChild,
@@ -1775,8 +1803,10 @@ function baseCreateRenderer(
         optimized,
       )
     }
+    // 如果旧节点数量多于新节点数量
     if (oldLength > newLength) {
       // remove old
+      // 移除多余的旧节点（从 commonLength 开始到结束）
       unmountChildren(
         c1,
         parentComponent,
@@ -1787,6 +1817,7 @@ function baseCreateRenderer(
       )
     } else {
       // mount new
+      // 否则，如果新节点数量多于旧节点，挂载新增的节点（从 commonLength 开始到结束）
       mountChildren(
         c2,
         container,
@@ -1801,7 +1832,28 @@ function baseCreateRenderer(
     }
   }
 
-  // can be all-keyed or mixed
+  /**
+   * Patch keyed children.
+   * This is the core diff algorithm for array children with keys.
+   * It tries to minimize DOM operations by syncing unchanged nodes from both ends (head and tail),
+   * and then handling the remaining middle part using a Longest Increasing Subsequence (LIS) algorithm
+   * to determine the minimum number of moves required.
+   *
+   * 处理带 key 的子节点更新。
+   * 这是处理带 key 数组子节点的核心 diff 算法。
+   * 它尝试通过从两端（头部和尾部）同步未改变的节点来最小化 DOM 操作，
+   * 然后使用最长递增子序列（LIS）算法处理剩余的中间部分，以确定所需的最少移动次数。
+   *
+   * @param c1 - Old children / 旧子节点
+   * @param c2 - New children / 新子节点
+   * @param container - Parent container / 父容器
+   * @param parentAnchor - Parent anchor / 父锚点
+   * @param parentComponent - Parent component / 父组件
+   * @param parentSuspense - Parent suspense / 父 Suspense
+   * @param namespace - Namespace / 命名空间
+   * @param slotScopeIds - Slot scope IDs / 插槽 Scopes
+   * @param optimized - Optimized flag / 优化标志
+   */
   const patchKeyedChildren = (
     c1: VNode[],
     c2: VNodeArrayChildren,
@@ -1815,18 +1867,23 @@ function baseCreateRenderer(
   ) => {
     let i = 0
     const l2 = c2.length
-    let e1 = c1.length - 1 // prev ending index
-    let e2 = l2 - 1 // next ending index
+    let e1 = c1.length - 1 // prev ending index / 旧节点的尾部索引
+    let e2 = l2 - 1 // next ending index / 新节点的尾部索引
 
     // 1. sync from start
     // (a b) c
     // (a b) d e
+    // 1. 从头部开始同步
+    // 逐个对比新旧节点的头部，如果相同则 patch，直到遇到不同的节点
     while (i <= e1 && i <= e2) {
       const n1 = c1[i]
+      // 规范化新节点（如果是 optimized 模式且已挂载则克隆）
       const n2 = (c2[i] = optimized
         ? cloneIfMounted(c2[i] as VNode)
         : normalizeVNode(c2[i]))
+      // 如果两个节点不仅 key 相同，类型也相同
       if (isSameVNodeType(n1, n2)) {
+        // 进行递归 patch 更新
         patch(
           n1,
           n2,
@@ -1839,6 +1896,7 @@ function baseCreateRenderer(
           optimized,
         )
       } else {
+        // 如果不同，说明头部同步结束，跳出循环
         break
       }
       i++
@@ -1847,12 +1905,17 @@ function baseCreateRenderer(
     // 2. sync from end
     // a (b c)
     // d e (b c)
+    // 2. 从尾部开始同步
+    // 逐个对比新旧节点的尾部，如果相同则 patch，直到遇到不同的节点
     while (i <= e1 && i <= e2) {
       const n1 = c1[e1]
+      // 规范化新节点
       const n2 = (c2[e2] = optimized
         ? cloneIfMounted(c2[e2] as VNode)
         : normalizeVNode(c2[e2]))
+      // 如果两个节点相同
       if (isSameVNodeType(n1, n2)) {
+        // 进行递归 patch 更新
         patch(
           n1,
           n2,
@@ -1865,8 +1928,10 @@ function baseCreateRenderer(
           optimized,
         )
       } else {
+        // 如果不同，说明尾部同步结束，跳出循环
         break
       }
+      // 移动尾部指针
       e1--
       e2--
     }
@@ -1878,10 +1943,15 @@ function baseCreateRenderer(
     // (a b)
     // c (a b)
     // i = 0, e1 = -1, e2 = 0
+    // 3. 普通序列 + 挂载
+    // 如果旧节点遍历完了，但新节点还有剩余，说明是新增节点的情况
     if (i > e1) {
       if (i <= e2) {
+        // 计算下一个插入锚点的位置
         const nextPos = e2 + 1
+        // 如果下个位置小于新节点长度，说明有后继节点，以它为锚点；否则以父锚点为锚点
         const anchor = nextPos < l2 ? (c2[nextPos] as VNode).el : parentAnchor
+        // 遍历剩余的新节点并挂载
         while (i <= e2) {
           patch(
             null,
@@ -1908,8 +1978,11 @@ function baseCreateRenderer(
     // a (b c)
     // (b c)
     // i = 0, e1 = 0, e2 = -1
+    // 4. 普通序列 + 卸载
+    // 如果新节点遍历完了，但旧节点还有剩余，说明是移除节点的情况
     else if (i > e2) {
       while (i <= e1) {
+        // 卸载多余的旧节点
         unmount(c1[i], parentComponent, parentSuspense, true)
         i++
       }
@@ -1919,17 +1992,21 @@ function baseCreateRenderer(
     // [i ... e1 + 1]: a b [c d e] f g
     // [i ... e2 + 1]: a b [e d c h] f g
     // i = 2, e1 = 4, e2 = 5
+    // 5. 未知序列（乱序处理）
+    // 如果新旧节点都有剩余，说明中间部分顺序不一致，需要进行复杂的移动/新增/删除处理
     else {
-      const s1 = i // prev starting index
-      const s2 = i // next starting index
+      const s1 = i // prev starting index / 旧节点乱序部分的起始索引
+      const s2 = i // next starting index / 新节点乱序部分的起始索引
 
       // 5.1 build key:index map for newChildren
+      // 5.1 为新子节点构建 key:index 映射表
       const keyToNewIndexMap: Map<PropertyKey, number> = new Map()
       for (i = s2; i <= e2; i++) {
         const nextChild = (c2[i] = optimized
           ? cloneIfMounted(c2[i] as VNode)
           : normalizeVNode(c2[i]))
         if (nextChild.key != null) {
+          // 如果是开发环境，检查 key 是否重复
           if (__DEV__ && keyToNewIndexMap.has(nextChild.key)) {
             warn(
               `Duplicate keys found during update:`,
@@ -1937,38 +2014,48 @@ function baseCreateRenderer(
               `Make sure keys are unique.`,
             )
           }
+          // 记录新节点的 key 对应的索引
           keyToNewIndexMap.set(nextChild.key, i)
         }
       }
 
       // 5.2 loop through old children left to be patched and try to patch
       // matching nodes & remove nodes that are no longer present
+      // 5.2 遍历待 patch 的旧节点，尝试 patch 匹配的节点，并移除不再存在的节点
       let j
-      let patched = 0
-      const toBePatched = e2 - s2 + 1
-      let moved = false
+      let patched = 0 // 已经 patch 的节点数量
+      const toBePatched = e2 - s2 + 1 // 需要被 patch 的新节点总数
+      let moved = false // 是否需要移动的标记
       // used to track whether any node has moved
-      let maxNewIndexSoFar = 0
+      let maxNewIndexSoFar = 0 // 追踪目前为止遇到的最大新索引，用于检测是否需要移动
       // works as Map<newIndex, oldIndex>
       // Note that oldIndex is offset by +1
       // and oldIndex = 0 is a special value indicating the new node has
       // no corresponding old node.
       // used for determining longest stable subsequence
+      // 这里的数组用于记录新节点索引对应旧节点索引的关系（newIndex -> oldIndex）
+      // oldIndex 存储时 +1，0 表示该新节点在旧列表中不存在（需要新增）
       const newIndexToOldIndexMap = new Array(toBePatched)
+      // 初始化数组，全为 0
       for (i = 0; i < toBePatched; i++) newIndexToOldIndexMap[i] = 0
 
+      // 遍历旧节点乱序部分
       for (i = s1; i <= e1; i++) {
         const prevChild = c1[i]
+        // 如果已经 patch 的数量超过了需要 patch 的新节点总数，说明剩下的旧节点都是多余的，直接卸载
         if (patched >= toBePatched) {
           // all new children have been patched so this can only be a removal
           unmount(prevChild, parentComponent, parentSuspense, true)
           continue
         }
         let newIndex
+        // 尝试找到该旧节点在新列表中的位置
         if (prevChild.key != null) {
+          // 如果有 key，直接查表
           newIndex = keyToNewIndexMap.get(prevChild.key)
         } else {
           // key-less node, try to locate a key-less node of the same type
+          // 如果没有 key，尝试在剩余未匹配的新节点中找一个类型相同的 key-less 节点
           for (j = s2; j <= e2; j++) {
             if (
               newIndexToOldIndexMap[j - s2] === 0 &&
@@ -1979,15 +2066,20 @@ function baseCreateRenderer(
             }
           }
         }
+        // 如果没找到，说明该旧节点在新列表中被删除了，进行卸载
         if (newIndex === undefined) {
           unmount(prevChild, parentComponent, parentSuspense, true)
         } else {
+          // 找到了，记录映射关系（注意 +1）
           newIndexToOldIndexMap[newIndex - s2] = i + 1
+          // 判断是否需要移动：如果当前新索引 >= 之前的最大新索引，说明顺序是递增的，不需要移动
           if (newIndex >= maxNewIndexSoFar) {
             maxNewIndexSoFar = newIndex
           } else {
+            // 否则说明不再是严格递增，需要移动
             moved = true
           }
+          // 进行 patch 更新（只是更新内容，不移动 DOM，移动留在最后）
           patch(
             prevChild,
             c2[newIndex] as VNode,
@@ -2005,20 +2097,25 @@ function baseCreateRenderer(
 
       // 5.3 move and mount
       // generate longest stable subsequence only when nodes have moved
+      // 5.3 移动和挂载
+      // 仅当 moved 为 true 时，计算最长递增子序列（LIS），这是移动的最优解
       const increasingNewIndexSequence = moved
         ? getSequence(newIndexToOldIndexMap)
         : EMPTY_ARR
       j = increasingNewIndexSequence.length - 1
       // looping backwards so that we can use last patched node as anchor
+      // 倒序遍历（从后往前），这样可以使用已经处理好的后一个节点作为插入锚点
       for (i = toBePatched - 1; i >= 0; i--) {
         const nextIndex = s2 + i
         const nextChild = c2[nextIndex] as VNode
         const anchorVNode = c2[nextIndex + 1] as VNode
+        // 计算锚点：如果不是最后一个，则使用后一个节点的 el
         const anchor =
           nextIndex + 1 < l2
             ? // #13559, #14173 fallback to el placeholder for unresolved async component
               anchorVNode.el || resolveAsyncComponentPlaceholder(anchorVNode)
             : parentAnchor
+        // 如果映射值为 0，说明旧列表中没有这个节点，是全新的，需要挂载
         if (newIndexToOldIndexMap[i] === 0) {
           // mount new
           patch(
@@ -2036,9 +2133,13 @@ function baseCreateRenderer(
           // move if:
           // There is no stable subsequence (e.g. a reverse)
           // OR current node is not among the stable sequence
+          // 如果需要移动：
+          // 1. 没有稳定子序列（如果不涉及移动逻辑 j 会 < 0）
+          // 2. 或者当前索引不在稳定子序列中（说明它不是“最长递增”的一部分，需要移动）
           if (j < 0 || i !== increasingNewIndexSequence[j]) {
             move(nextChild, container, anchor, MoveType.REORDER)
           } else {
+            // 如果在稳定子序列中，说明位置正确，不需要动，指针前移
             j--
           }
         }

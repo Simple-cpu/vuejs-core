@@ -807,11 +807,26 @@ export function normalizeVNode(child: VNodeChild): VNode {
 }
 
 // optimized normalization for template-compiled render fns
+/**
+ * Clone the VNode if it is already mounted or hoisted in a cache.
+ * This is necessary because VNodes are designed to be immutable once mounted,
+ * but in some cases (cached or reused vnodes), we need a fresh copy to work with during updates.
+ *
+ * 如果 VNode 已经挂载或被缓存（hoisted）则克隆它。
+ * 这是必要的，因为 VNode 一旦挂载就被视为不可变的。
+ * 但在某些情况下（缓存或复用的 vnodes），我们需要一个新的副本在更新期间使用。
+ *
+ * @param child - The VNode to check / 待检查的 VNode
+ * @returns The same VNode if not mounted, or a cloned VNode / 如果未挂载返回原 VNode，否则返回克隆后的 VNode
+ */
 export function cloneIfMounted(child: VNode): VNode {
+  // (child.el === null): 节点尚未挂载
+  // (child.patchFlag !== PatchFlags.CACHED): 节点不是静态提升的（hoisted）
+  // child.memo: 节点有 v-memo 指令
   return (child.el === null && child.patchFlag !== PatchFlags.CACHED) ||
     child.memo
-    ? child
-    : cloneVNode(child)
+    ? child // 如果未挂载且未缓存，或者是 v-memo 节点，直接返回原节点
+    : cloneVNode(child) // 否则（已挂载或已缓存），返回克隆的 VNode
 }
 
 export function normalizeChildren(vnode: VNode, children: unknown): void {
